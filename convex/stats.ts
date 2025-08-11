@@ -83,6 +83,23 @@ export const setStatsForDate = mutation({
   },
 });
 
+export const summaryToday = query({
+  args: {},
+  handler: async (ctx) => {
+    const today = toYmdUtcPlus3(new Date());
+    const doc = await ctx.db
+      .query("statsByDate")
+      .withIndex("by_date", (q) => q.eq("date", today))
+      .unique();
+    return {
+      conversations: doc?.conversations ?? 0,
+      accounts: doc?.accounts ?? 0,
+      revenue: doc?.revenue ?? 0,
+      date: today,
+    };
+  },
+});
+
 export const getAutopumpSettings = query({
   args: {},
   handler: async (ctx) => {
@@ -237,6 +254,8 @@ export const autopumpTick = internalMutation({
           lastAccountsTickMs: settings.lastAccountsTickMs,
         });
       }
+      // Пробуждаем клиентов, подписанных на today-сводку (reactive re-run)
+      // (пустой патч today-документа уже сделан выше)
     }
 
     await ctx.scheduler.runAfter(minIntervalSec * 1000, internal.stats.autopumpTick, {});
