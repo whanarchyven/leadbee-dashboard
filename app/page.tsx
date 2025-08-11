@@ -1,16 +1,9 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
-type DateRange = { from?: Date; to?: Date } | undefined;
-
-function ymd(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+// date picker and utilities removed
 
 export default function Home() {
   // Показываем актуальные значения за сегодня (UTC+3), чтобы совпадали с автоподкрутчиком
