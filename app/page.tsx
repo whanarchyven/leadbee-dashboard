@@ -6,8 +6,8 @@ import { api } from "../convex/_generated/api";
 // date picker and utilities removed
 
 export default function Home() {
-  // Показываем актуальные значения за сегодня (UTC+3), чтобы совпадали с автоподкрутчиком
-  const data = useQuery(api.stats.summaryToday, {});
+  // Глобальные значения без сброса по дням
+  const data = useQuery(api.stats.summaryGlobal, {});
 
   return (
     <main className="p-6 max-w-5xl mx-auto">

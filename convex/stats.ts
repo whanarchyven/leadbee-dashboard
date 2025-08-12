@@ -17,29 +17,15 @@ function toYmdUtcPlus3(now: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-export const summaryByDateRange = query({
-  args: {
-    startDate: v.string(), // YYYY-MM-DD inclusive
-    endDate: v.string(),
-  },
-  handler: async (ctx, { startDate, endDate }) => {
-    const docs = await ctx.db
-      .query("statsByDate")
-      .withIndex("by_date", (q) => q.gte("date", startDate))
-      .filter((q) => q.lte(q.field("date"), endDate))
-      .collect();
-
-    const totals = docs.reduce(
-      (acc, d) => {
-        acc.conversations += d.conversations;
-        acc.accounts += d.accounts;
-        acc.revenue += d.revenue;
-        return acc;
-      },
-      { conversations: 0, accounts: 0, revenue: 0 }
-    );
-
-    return totals;
+export const summaryGlobal = query({
+  args: {},
+  handler: async (ctx) => {
+    const doc = await ctx.db.query("globalStats").first();
+    return {
+      conversations: doc?.conversations ?? 0,
+      accounts: doc?.accounts ?? 0,
+      revenue: doc?.revenue ?? 0,
+    };
   },
 });
 
@@ -83,20 +69,21 @@ export const setStatsForDate = mutation({
   },
 });
 
-export const summaryToday = query({
-  args: {},
-  handler: async (ctx) => {
-    const today = toYmdUtcPlus3(new Date());
-    const doc = await ctx.db
-      .query("statsByDate")
-      .withIndex("by_date", (q) => q.eq("date", today))
-      .unique();
-    return {
-      conversations: doc?.conversations ?? 0,
-      accounts: doc?.accounts ?? 0,
-      revenue: doc?.revenue ?? 0,
-      date: today,
-    };
+export const setGlobalStats = mutation({
+  args: {
+    conversations: v.number(),
+    accounts: v.number(),
+    revenue: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const uid = await getAuthUserId(ctx);
+    const user = uid ? await ctx.db.get(uid) : null;
+    if (!user || user.email !== "youthful.swordfish892@mail.com") {
+      throw new Error("Forbidden");
+    }
+    const existing = await ctx.db.query("globalStats").first();
+    if (existing) await ctx.db.patch(existing._id, args);
+    else await ctx.db.insert("globalStats", args);
   },
 });
 
@@ -111,15 +98,15 @@ export const getAutopumpSettings = query({
       revenueMinStep: 0,
       revenueMaxStep: 0,
       revenueIntervalSeconds: 10,
-      revenueDailyCap: 0,
+      revenueCap: 0,
       conversationsMinStep: 0,
       conversationsMaxStep: 0,
       conversationsIntervalSeconds: 10,
-      conversationsDailyCap: 0,
+      conversationsCap: 0,
       accountsMinStep: 0,
       accountsMaxStep: 0,
       accountsIntervalSeconds: 10,
-      accountsDailyCap: 0,
+      accountsCap: 0,
       timezoneOffsetMinutes: 180,
     } as any;
   },
@@ -131,15 +118,15 @@ export const updateAutopumpSettings = mutation({
     revenueMinStep: v.number(),
     revenueMaxStep: v.number(),
     revenueIntervalSeconds: v.number(),
-    revenueDailyCap: v.number(),
+    revenueCap: v.number(),
     conversationsMinStep: v.number(),
     conversationsMaxStep: v.number(),
     conversationsIntervalSeconds: v.number(),
-    conversationsDailyCap: v.number(),
+    conversationsCap: v.number(),
     accountsMinStep: v.number(),
     accountsMaxStep: v.number(),
     accountsIntervalSeconds: v.number(),
-    accountsDailyCap: v.number(),
+    accountsCap: v.number(),
   },
   handler: async (ctx, args) => {
     const uid = await getAuthUserId(ctx);
@@ -185,15 +172,10 @@ export const autopumpTick = internalMutation({
       return;
     }
 
-    const today = toYmdUtcPlus3(new Date());
-    const existing = await ctx.db
-      .query("statsByDate")
-      .withIndex("by_date", (q) => q.eq("date", today))
-      .unique();
+    const existing = await ctx.db.query("globalStats").first();
     const targetId = existing
       ? existing._id
-      : await ctx.db.insert("statsByDate", {
-          date: today,
+      : await ctx.db.insert("globalStats", {
           conversations: 0,
           accounts: 0,
           revenue: 0,
@@ -213,7 +195,7 @@ export const autopumpTick = internalMutation({
         settings.revenueIntervalSeconds * 1000
     ) {
       const step = randBetween(settings.revenueMinStep ?? 0, settings.revenueMaxStep ?? 0);
-      const limit = settings.revenueDailyCap ?? 0;
+      const limit = settings.revenueCap ?? 0;
       const next = doc.revenue + step;
       updates.revenue = limit > 0 ? Math.min(next, limit) : next;
       settings.lastRevenueTickMs = nowMs;
@@ -224,7 +206,7 @@ export const autopumpTick = internalMutation({
         settings.conversationsIntervalSeconds * 1000
     ) {
       const step = randBetween(settings.conversationsMinStep ?? 0, settings.conversationsMaxStep ?? 0);
-      const limit = settings.conversationsDailyCap ?? 0;
+      const limit = settings.conversationsCap ?? 0;
       const next = doc.conversations + step;
       updates.conversations = limit > 0 ? Math.min(next, limit) : next;
       settings.lastConversationsTickMs = nowMs;
@@ -235,7 +217,7 @@ export const autopumpTick = internalMutation({
         settings.accountsIntervalSeconds * 1000
     ) {
       const step = randBetween(settings.accountsMinStep ?? 0, settings.accountsMaxStep ?? 0);
-      const limit = settings.accountsDailyCap ?? 0;
+      const limit = settings.accountsCap ?? 0;
       const next = doc.accounts + step;
       updates.accounts = limit > 0 ? Math.min(next, limit) : next;
       settings.lastAccountsTickMs = nowMs;
@@ -254,8 +236,7 @@ export const autopumpTick = internalMutation({
           lastAccountsTickMs: settings.lastAccountsTickMs,
         });
       }
-      // Пробуждаем клиентов, подписанных на today-сводку (reactive re-run)
-      // (пустой патч today-документа уже сделан выше)
+      // Патч globalStats пробуждает потребителей summaryGlobal автоматически
     }
 
     await ctx.scheduler.runAfter(minIntervalSec * 1000, internal.stats.autopumpTick, {});
